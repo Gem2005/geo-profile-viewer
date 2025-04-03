@@ -1,4 +1,3 @@
-
 import React, { useState } from 'react';
 import { Profile, Address, GeoLocation } from '@/types';
 import { 
@@ -13,8 +12,14 @@ import { Textarea } from '@/components/ui/textarea';
 import { Button } from '@/components/ui/button';
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 import { Label } from '@/components/ui/label';
-import { toast } from '@/components/ui/sonner';
-import { Edit, User, Trash2 } from 'lucide-react';
+import { toast } from 'sonner';
+import { 
+  Edit, 
+  User, 
+  Trash2, 
+  Twitter as TwitterIcon, 
+  Linkedin as LinkedinIcon
+} from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle, CardFooter } from '@/components/ui/card';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 
@@ -58,7 +63,6 @@ const AdminPanel: React.FC<AdminPanelProps> = ({
   const [isAddingNew, setIsAddingNew] = useState(false);
   const [interestsInput, setInterestsInput] = useState('');
 
-  // Edit a profile
   const handleEditProfile = (profile: Profile) => {
     setCurrentProfile({ ...profile });
     setInterestsInput(profile.interests?.join(', ') || '');
@@ -66,7 +70,6 @@ const AdminPanel: React.FC<AdminPanelProps> = ({
     setIsEditing(true);
   };
 
-  // Add a new profile
   const handleAddProfile = () => {
     setCurrentProfile({ 
       id: `new-${Date.now()}`, 
@@ -77,17 +80,14 @@ const AdminPanel: React.FC<AdminPanelProps> = ({
     setIsEditing(true);
   };
 
-  // Save profile changes
   const handleSaveProfile = () => {
     if (!currentProfile) return;
     
-    // Validate required fields
     if (!currentProfile.name || !currentProfile.address.city) {
       toast.error('Please fill out all required fields');
       return;
     }
     
-    // Process interests
     if (interestsInput) {
       currentProfile.interests = interestsInput
         .split(',')
@@ -114,7 +114,6 @@ const AdminPanel: React.FC<AdminPanelProps> = ({
     }
   };
 
-  // Delete a profile
   const handleDeleteProfile = (id: string) => {
     if (window.confirm('Are you sure you want to delete this profile?')) {
       onDeleteProfile(id);
@@ -122,7 +121,6 @@ const AdminPanel: React.FC<AdminPanelProps> = ({
     }
   };
 
-  // Update field in current profile
   const updateField = (
     field: string, 
     value: string | string[] | GeoLocation, 
@@ -146,7 +144,6 @@ const AdminPanel: React.FC<AdminPanelProps> = ({
     }
   };
 
-  // Update geo coordinates
   const updateGeoLocation = (field: 'lat' | 'lng', value: string) => {
     if (!currentProfile) return;
     
@@ -168,7 +165,6 @@ const AdminPanel: React.FC<AdminPanelProps> = ({
     }
   };
 
-  // Get initials for avatar
   const getInitials = (name: string) => {
     return name
       .split(' ')
@@ -229,7 +225,6 @@ const AdminPanel: React.FC<AdminPanelProps> = ({
         ))}
       </div>
       
-      {/* Edit/Add Profile Dialog */}
       <Dialog open={isEditing} onOpenChange={setIsEditing}>
         <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
           <DialogHeader>
@@ -450,7 +445,7 @@ const AdminPanel: React.FC<AdminPanelProps> = ({
                   
                   <div className="space-y-3">
                     <div className="flex items-center gap-2">
-                      <Twitter size={16} className="text-muted-foreground" />
+                      <TwitterIcon size={16} className="text-muted-foreground" />
                       <Input
                         value={currentProfile.socialLinks?.twitter || ''}
                         onChange={(e) => {
@@ -467,7 +462,7 @@ const AdminPanel: React.FC<AdminPanelProps> = ({
                     </div>
                     
                     <div className="flex items-center gap-2">
-                      <Linkedin size={16} className="text-muted-foreground" />
+                      <LinkedinIcon size={16} className="text-muted-foreground" />
                       <Input
                         value={currentProfile.socialLinks?.linkedin || ''}
                         onChange={(e) => {

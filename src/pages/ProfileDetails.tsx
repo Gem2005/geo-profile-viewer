@@ -1,11 +1,10 @@
-
 import React, { useState, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { Profile } from '@/types';
 import { getProfileById, updateProfile } from '@/data/profiles';
 import ProfileDetail from '@/components/ProfileDetail';
 import AdminPanel from '@/components/AdminPanel';
-import { toast } from '@/components/ui/sonner';
+import { toast } from 'sonner';
 
 const ProfileDetails = () => {
   const { id } = useParams<{ id: string }>();
