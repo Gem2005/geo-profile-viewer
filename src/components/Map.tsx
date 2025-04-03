@@ -1,4 +1,3 @@
-
 import React, { useEffect, useRef, useState } from 'react';
 import { Profile, GeoLocation } from '@/types';
 import { toast } from 'sonner';
@@ -6,7 +5,7 @@ import { loadGoogleMapsApi, isValidGoogleMapsApiKey } from '@/utils/MapUtils';
 import GoogleMapsApiKeyInput from './GoogleMapsApiKeyInput';
 
 // Default API key - in production, use environment variables
-const GOOGLE_MAPS_API_KEY = '';
+const GOOGLE_MAPS_API_KEY = import.meta.env.VITE_GOOGLE_MAPS_API_KEY || '';
 
 interface MapProps {
   selectedProfile?: Profile | null;
@@ -39,12 +38,15 @@ const Map: React.FC<MapProps> = ({
   useEffect(() => {
     if (!mapContainer.current || !apiKey || showKeyInput) return;
 
+    let mapInstance: google.maps.Map | null = null;
+    let isComponentMounted = true;
+
     const initMap = async () => {
       try {
         await loadGoogleMapsApi(apiKey);
         
-        if (!mapRef.current) {
-          mapRef.current = new google.maps.Map(mapContainer.current, {
+        if (mapContainer.current && !mapRef.current && isComponentMounted) {
+          mapInstance = new google.maps.Map(mapContainer.current, {
             center: { lat: initialCenter.lat, lng: initialCenter.lng },
             zoom: initialZoom,
             mapTypeControl: true,
@@ -53,32 +55,60 @@ const Map: React.FC<MapProps> = ({
             zoomControl: true,
           });
           
+          mapRef.current = mapInstance;
+          
           // Add event listener for map load
-          google.maps.event.addListenerOnce(mapRef.current, 'tilesloaded', () => {
-            setIsMapReady(true);
+          google.maps.event.addListenerOnce(mapInstance, 'tilesloaded', () => {
+            if (isComponentMounted) {
+              setIsMapReady(true);
+            }
           });
         }
       } catch (error) {
         console.error("Error initializing Google Maps:", error);
-        toast.error("Failed to initialize map. Please check your Google Maps API key.");
-        setShowKeyInput(true);
+        if (isComponentMounted) {
+          toast.error("Failed to initialize map. Please check your Google Maps API key.");
+          setShowKeyInput(true);
+        }
       }
     };
 
     initMap();
 
     return () => {
-      // Clean up markers
-      Object.values(markersRef.current).forEach(marker => {
-        marker.setMap(null);
-      });
-      markersRef.current = {};
+      isComponentMounted = false;
       
-      // Clean up info windows
-      Object.values(infoWindowsRef.current).forEach(infoWindow => {
-        infoWindow.close();
-      });
-      infoWindowsRef.current = {};
+      // Safer cleanup approach
+      if (mapRef.current) {
+        // First clean up info windows
+        Object.values(infoWindowsRef.current).forEach(infoWindow => {
+          try {
+            infoWindow.close();
+          } catch (e) {
+            console.warn("Error closing info window:", e);
+          }
+        });
+        
+        // Then clean up markers
+        Object.values(markersRef.current).forEach(marker => {
+          try {
+            marker.setMap(null);
+          } catch (e) {
+            console.warn("Error removing marker:", e);
+          }
+        });
+        
+        // Clear references
+        infoWindowsRef.current = {};
+        markersRef.current = {};
+        
+        // Remove all event listeners
+        if (window.google && window.google.maps) {
+          google.maps.event.clearInstanceListeners(mapRef.current);
+        }
+        
+        mapRef.current = null;
+      }
     };
   }, [apiKey, showKeyInput, initialCenter, initialZoom]);
 
@@ -101,27 +131,40 @@ const Map: React.FC<MapProps> = ({
     setShowKeyInput(false);
   };
 
-  // Add markers for profiles
+  // Add markers for profiles - with explicit cleanup
   useEffect(() => {
     if (!isMapReady || !mapRef.current) return;
 
-    // Clear existing markers
+    // Create local tracking of created elements
+    const currentMarkers: { [key: string]: google.maps.Marker } = {};
+    const currentInfoWindows: { [key: string]: google.maps.InfoWindow } = {};
+    let isEffectActive = true;
+
+    // Clear existing markers before creating new ones
     Object.values(markersRef.current).forEach(marker => {
-      marker.setMap(null);
+      try {
+        marker.setMap(null);
+      } catch (e) {
+        console.warn("Error removing marker:", e);
+      }
     });
-    markersRef.current = {};
     
     // Clear existing info windows
     Object.values(infoWindowsRef.current).forEach(infoWindow => {
-      infoWindow.close();
+      try {
+        infoWindow.close();
+      } catch (e) {
+        console.warn("Error closing info window:", e);
+      }
     });
-    infoWindowsRef.current = {};
 
     // Add markers for all profiles
-    if (profiles?.length) {
+    if (profiles?.length && mapRef.current) {
       const bounds = new google.maps.LatLngBounds();
       
       profiles.forEach(profile => {
+        if (!isEffectActive) return;
+        
         const { location } = profile.address;
         const position = { lat: location.lat, lng: location.lng };
         
@@ -161,10 +204,14 @@ const Map: React.FC<MapProps> = ({
         });
         
         // Add click event to marker
-        marker.addListener('click', () => {
+        const clickListener = marker.addListener('click', () => {
           // Close all info windows
-          Object.values(infoWindowsRef.current).forEach(window => {
-            window.close();
+          Object.values(currentInfoWindows).forEach(window => {
+            try {
+              window.close();
+            } catch (e) {
+              console.warn("Error closing info window:", e);
+            }
           });
           
           // Open this info window
@@ -177,132 +224,135 @@ const Map: React.FC<MapProps> = ({
         });
         
         // Store marker and info window references
-        markersRef.current[profile.id] = marker;
-        infoWindowsRef.current[profile.id] = infoWindow;
+        currentMarkers[profile.id] = marker;
+        currentInfoWindows[profile.id] = infoWindow;
         
         // Extend bounds to include this marker
         bounds.extend(position);
       });
       
       // Fit map to bounds if multiple profiles and no selected profile
-      if (profiles.length > 1 && !selectedProfile) {
-        mapRef.current.fitBounds(bounds);
-        
-        // Add some padding
-        const listener = google.maps.event.addListenerOnce(mapRef.current, 'bounds_changed', () => {
-          mapRef.current?.setZoom(Math.min(mapRef.current.getZoom() || 15, 15));
-        });
+      if (isEffectActive && profiles.length > 1 && !selectedProfile && mapRef.current) {
+        try {
+          mapRef.current.fitBounds(bounds);
+          
+          // Add some padding
+          google.maps.event.addListenerOnce(mapRef.current, 'bounds_changed', () => {
+            if (isEffectActive && mapRef.current) {
+              mapRef.current.setZoom(Math.min(mapRef.current.getZoom() || 15, 15));
+            }
+          });
+        } catch (e) {
+          console.warn("Error fitting bounds:", e);
+        }
+      }
+      
+      // Update refs with the current collections we've created
+      if (isEffectActive) {
+        markersRef.current = currentMarkers;
+        infoWindowsRef.current = currentInfoWindows;
       }
     }
     
     // Handle selected profile
-    if (selectedProfile) {
-      const { location } = selectedProfile.address;
-      
-      // Center map on selected profile
-      mapRef.current.panTo({ lat: location.lat, lng: location.lng });
-      mapRef.current.setZoom(14);
-      
-      // If we have a marker for the selected profile, show its info window
-      if (markersRef.current[selectedProfile.id]) {
-        const marker = markersRef.current[selectedProfile.id];
-        const infoWindow = infoWindowsRef.current[selectedProfile.id];
+    if (isEffectActive && selectedProfile && mapRef.current) {
+      try {
+        const { location } = selectedProfile.address;
         
-        if (infoWindow) {
-          // Close all other info windows
-          Object.values(infoWindowsRef.current).forEach(window => {
-            window.close();
+        // Center map on selected profile
+        mapRef.current.panTo({ lat: location.lat, lng: location.lng });
+        mapRef.current.setZoom(14);
+        
+        // If we have a marker for the selected profile, show its info window
+        if (markersRef.current[selectedProfile.id]) {
+          const marker = markersRef.current[selectedProfile.id];
+          const infoWindow = infoWindowsRef.current[selectedProfile.id];
+          
+          if (infoWindow) {
+            // Close all other info windows
+            Object.values(infoWindowsRef.current).forEach(window => {
+              if (window !== infoWindow) {
+                try {
+                  window.close();
+                } catch (e) {
+                  console.warn("Error closing info window:", e);
+                }
+              }
+            });
+            
+            // Open this info window
+            infoWindow.open(mapRef.current, marker);
+          }
+        }
+        // If we don't have profiles list but have a selected profile, create a marker for it
+        else if (!profiles) {
+          const position = { lat: location.lat, lng: location.lng };
+          
+          const marker = new google.maps.Marker({
+            position,
+            map: mapRef.current,
+            title: selectedProfile.name,
+            animation: google.maps.Animation.DROP,
+            icon: {
+              path: google.maps.SymbolPath.CIRCLE,
+              scale: 10,
+              fillColor: '#7c3aed',
+              fillOpacity: 0.9,
+              strokeWeight: 2,
+              strokeColor: '#ffffff',
+            }
           });
           
-          // Open this info window
-          infoWindow.open(mapRef.current, marker);
+          // Store this single marker for cleanup
+          currentMarkers['selected'] = marker;
         }
-      }
-      // If we don't have profiles list but have a selected profile, create a marker for it
-      else if (!profiles) {
-        const position = { lat: location.lat, lng: location.lng };
-        
-        const marker = new google.maps.Marker({
-          position,
-          map: mapRef.current,
-          title: selectedProfile.name,
-          animation: google.maps.Animation.DROP,
-          icon: {
-            path: google.maps.SymbolPath.CIRCLE,
-            scale: 10,
-            fillColor: '#7c3aed',
-            fillOpacity: 0.9,
-            strokeWeight: 2,
-            strokeColor: '#ffffff',
-          }
-        });
-        
-        const contentString = `
-          <div style="max-width: 250px; padding: 10px;">
-            <div style="display: flex; align-items: center; gap: 10px; margin-bottom: 10px;">
-              <img src="${selectedProfile.avatar}" alt="${selectedProfile.name}" style="width: 40px; height: 40px; border-radius: 50%; object-fit: cover;" />
-              <div>
-                <h3 style="margin: 0; font-weight: 600;">${selectedProfile.name}</h3>
-                <p style="margin: 0; font-size: 12px; color: #666;">${selectedProfile.address.city}, ${selectedProfile.address.state}</p>
-              </div>
-            </div>
-            <p style="margin: 5px 0; font-size: 14px;">${selectedProfile.description}</p>
-            <p style="margin: 5px 0; font-size: 12px; font-weight: 600;">${selectedProfile.address.street}, ${selectedProfile.address.city}, ${selectedProfile.address.state} ${selectedProfile.address.zipCode}</p>
-          </div>
-        `;
-        
-        const infoWindow = new google.maps.InfoWindow({
-          content: contentString,
-          maxWidth: 300
-        });
-        
-        // Store references
-        markersRef.current[selectedProfile.id] = marker;
-        infoWindowsRef.current[selectedProfile.id] = infoWindow;
-        
-        // Open info window
-        infoWindow.open(mapRef.current, marker);
+      } catch (e) {
+        console.warn("Error handling selected profile:", e);
       }
     }
+
+    return () => {
+      isEffectActive = false;
+      
+      // Clean up the markers created in this effect
+      Object.values(currentMarkers).forEach(marker => {
+        try {
+          if (marker) {
+            google.maps.event.clearInstanceListeners(marker);
+            marker.setMap(null);
+          }
+        } catch (e) {
+          console.warn("Error cleaning up marker:", e);
+        }
+      });
+      
+      // Close info windows created in this effect
+      Object.values(currentInfoWindows).forEach(infoWindow => {
+        try {
+          if (infoWindow) {
+            infoWindow.close();
+          }
+        } catch (e) {
+          console.warn("Error closing info window:", e);
+        }
+      });
+    };
   }, [isMapReady, selectedProfile, profiles, onProfileSelect]);
 
-  // Add window resize handler
-  useEffect(() => {
-    const handleResize = () => {
-      if (mapRef.current) {
-        google.maps.event.trigger(mapRef.current, 'resize');
-      }
-    };
-    
-    window.addEventListener('resize', handleResize);
-    return () => {
-      window.removeEventListener('resize', handleResize);
-    };
-  }, []);
-
-  if (showKeyInput) {
-    return (
-      <GoogleMapsApiKeyInput 
-        onApiKeySet={handleApiKeySet} 
-        className={className}
-      />
-    );
-  }
-
+  // Render the map container or API key input
   return (
-    <div 
-      ref={mapContainer} 
-      className={`h-full min-h-[300px] ${className} relative rounded-md overflow-hidden border`}
-    >
-      {!isMapReady && (
-        <div className="absolute inset-0 flex items-center justify-center bg-background/80 z-10">
-          <div className="animate-pulse-slow">
-            <div className="h-10 w-10 rounded-full bg-primary animate-spin border-t-2 border-primary-foreground"></div>
-          </div>
-          <span className="ml-3 text-sm font-medium">Loading map...</span>
-        </div>
+    <>
+      {showKeyInput ? (
+        <GoogleMapsApiKeyInput onApiKeySet={handleApiKeySet} />
+      ) : (
+        <div 
+          ref={mapContainer} 
+          className={`w-full h-full ${className}`}
+          style={{ minHeight: '100%' }}
+          data-testid="map-container"
+        />
       )}
-    </div>
+    </>
   );
 };
 
