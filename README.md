@@ -19,8 +19,8 @@ This is a React + Vite web application that displays a list of profiles and thei
    ```
 
 ## Deployment
-Place your Vercel link here:
-[Deployment Link]()
+Vercel Deployment: https://geo-profile-viewer.vercel.app/
+
 
 ## Features
 - Responsive design for mobile and desktop.
