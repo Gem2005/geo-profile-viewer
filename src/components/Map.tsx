@@ -1,13 +1,12 @@
 
 import React, { useEffect, useRef, useState } from 'react';
-import mapboxgl from 'mapbox-gl';
-import 'mapbox-gl/dist/mapbox-gl.css';
 import { Profile, GeoLocation } from '@/types';
 import { toast } from 'sonner';
+import { loadGoogleMapsApi, isValidGoogleMapsApiKey } from '@/utils/MapUtils';
+import GoogleMapsApiKeyInput from './GoogleMapsApiKeyInput';
 
-// Note: In a production app, this would be stored as an environment variable
-// or retrieved from a backend service
-const MAPBOX_ACCESS_TOKEN = "YOUR_MAPBOX_ACCESS_TOKEN";
+// Default API key - in production, use environment variables
+const GOOGLE_MAPS_API_KEY = '';
 
 interface MapProps {
   selectedProfile?: Profile | null;
@@ -27,197 +26,266 @@ const Map: React.FC<MapProps> = ({
   initialZoom = 3,
 }) => {
   const mapContainer = useRef<HTMLDivElement>(null);
-  const map = useRef<mapboxgl.Map | null>(null);
-  const [mapboxToken, setMapboxToken] = useState<string>(MAPBOX_ACCESS_TOKEN);
+  const mapRef = useRef<google.maps.Map | null>(null);
+  const [apiKey, setApiKey] = useState<string>(GOOGLE_MAPS_API_KEY);
   const [isMapReady, setIsMapReady] = useState<boolean>(false);
-  const markersRef = useRef<{ [key: string]: mapboxgl.Marker }>({});
+  const markersRef = useRef<{ [key: string]: google.maps.Marker }>({});
+  const infoWindowsRef = useRef<{ [key: string]: google.maps.InfoWindow }>({});
 
-  // For token input if the hardcoded token is not set
-  const [showTokenInput, setShowTokenInput] = useState<boolean>(!MAPBOX_ACCESS_TOKEN || MAPBOX_ACCESS_TOKEN === "YOUR_MAPBOX_ACCESS_TOKEN");
+  // Show API key input if no key is provided
+  const [showKeyInput, setShowKeyInput] = useState<boolean>(!GOOGLE_MAPS_API_KEY);
 
+  // Initialize map when API key is available
   useEffect(() => {
-    if (!mapContainer.current || !mapboxToken || showTokenInput) return;
+    if (!mapContainer.current || !apiKey || showKeyInput) return;
 
-    try {
-      mapboxgl.accessToken = mapboxToken;
-      
-      if (!map.current) {
-        map.current = new mapboxgl.Map({
-          container: mapContainer.current,
-          style: 'mapbox://styles/mapbox/streets-v11',
-          center: [initialCenter.lng, initialCenter.lat],
-          zoom: initialZoom,
-        });
-
-        map.current.addControl(new mapboxgl.NavigationControl(), 'top-right');
+    const initMap = async () => {
+      try {
+        await loadGoogleMapsApi(apiKey);
         
-        map.current.on('load', () => {
-          setIsMapReady(true);
-        });
-
-        // Add responsive handling
-        window.addEventListener('resize', () => {
-          map.current?.resize();
-        });
-      }
-    } catch (error) {
-      console.error("Error initializing Mapbox:", error);
-      toast.error("Failed to initialize map. Please check your Mapbox token.");
-      setShowTokenInput(true);
-    }
-
-    return () => {
-      map.current?.remove();
-      map.current = null;
-    };
-  }, [mapboxToken, showTokenInput, initialCenter, initialZoom]);
-
-  // Handle token submission
-  const handleTokenSubmit = (e: React.FormEvent) => {
-    e.preventDefault();
-    const input = e.currentTarget.querySelector('input') as HTMLInputElement;
-    if (input.value.trim()) {
-      setMapboxToken(input.value.trim());
-      setShowTokenInput(false);
-    }
-  };
-
-  // Add markers for all profiles if provided
-  useEffect(() => {
-    if (!isMapReady || !map.current) return;
-
-    // Clear existing markers
-    Object.values(markersRef.current).forEach(marker => marker.remove());
-    markersRef.current = {};
-
-    // If we have multiple profiles to show
-    if (profiles?.length) {
-      profiles.forEach(profile => {
-        const { location } = profile.address;
-        
-        // Create a marker element
-        const markerEl = document.createElement('div');
-        markerEl.className = 'rounded-full bg-primary w-6 h-6 border-2 border-white shadow-md flex items-center justify-center text-white text-xs font-bold';
-        markerEl.innerHTML = profile.name.charAt(0);
-        
-        // If this is the selected profile, make it larger
-        if (selectedProfile?.id === profile.id) {
-          markerEl.classList.add('w-8', 'h-8');
-          markerEl.classList.remove('w-6', 'h-6');
-        }
-        
-        // Create and add the marker
-        const marker = new mapboxgl.Marker(markerEl)
-          .setLngLat([location.lng, location.lat])
-          .addTo(map.current!);
-        
-        // Add popup with profile info on click
-        const popup = new mapboxgl.Popup({ offset: 25 })
-          .setHTML(`
-            <div class="flex items-center gap-3">
-              <img src="${profile.avatar}" alt="${profile.name}" class="w-10 h-10 rounded-full object-cover" />
-              <div>
-                <h3 class="font-semibold">${profile.name}</h3>
-                <p class="text-xs text-muted-foreground">${profile.address.city}, ${profile.address.state}</p>
-              </div>
-            </div>
-            <p class="mt-2 text-sm">${profile.description.substring(0, 100)}${profile.description.length > 100 ? '...' : ''}</p>
-          `);
-        
-        marker.setPopup(popup);
-        
-        // Add click handler if onProfileSelect is provided
-        if (onProfileSelect) {
-          marker.getElement().addEventListener('click', () => {
-            onProfileSelect(profile.id);
+        if (!mapRef.current) {
+          mapRef.current = new google.maps.Map(mapContainer.current, {
+            center: { lat: initialCenter.lat, lng: initialCenter.lng },
+            zoom: initialZoom,
+            mapTypeControl: true,
+            streetViewControl: true,
+            fullscreenControl: true,
+            zoomControl: true,
+          });
+          
+          // Add event listener for map load
+          google.maps.event.addListenerOnce(mapRef.current, 'tilesloaded', () => {
+            setIsMapReady(true);
           });
         }
+      } catch (error) {
+        console.error("Error initializing Google Maps:", error);
+        toast.error("Failed to initialize map. Please check your Google Maps API key.");
+        setShowKeyInput(true);
+      }
+    };
+
+    initMap();
+
+    return () => {
+      // Clean up markers
+      Object.values(markersRef.current).forEach(marker => {
+        marker.setMap(null);
+      });
+      markersRef.current = {};
+      
+      // Clean up info windows
+      Object.values(infoWindowsRef.current).forEach(infoWindow => {
+        infoWindow.close();
+      });
+      infoWindowsRef.current = {};
+    };
+  }, [apiKey, showKeyInput, initialCenter, initialZoom]);
+
+  // Check localStorage for saved API key on first load
+  useEffect(() => {
+    try {
+      const savedKey = localStorage.getItem('google_maps_api_key');
+      if (savedKey && isValidGoogleMapsApiKey(savedKey)) {
+        setApiKey(savedKey);
+        setShowKeyInput(false);
+      }
+    } catch (e) {
+      console.warn('Could not access localStorage', e);
+    }
+  }, []);
+
+  // Handle API key set from GoogleMapsApiKeyInput
+  const handleApiKeySet = (key: string) => {
+    setApiKey(key);
+    setShowKeyInput(false);
+  };
+
+  // Add markers for profiles
+  useEffect(() => {
+    if (!isMapReady || !mapRef.current) return;
+
+    // Clear existing markers
+    Object.values(markersRef.current).forEach(marker => {
+      marker.setMap(null);
+    });
+    markersRef.current = {};
+    
+    // Clear existing info windows
+    Object.values(infoWindowsRef.current).forEach(infoWindow => {
+      infoWindow.close();
+    });
+    infoWindowsRef.current = {};
+
+    // Add markers for all profiles
+    if (profiles?.length) {
+      const bounds = new google.maps.LatLngBounds();
+      
+      profiles.forEach(profile => {
+        const { location } = profile.address;
+        const position = { lat: location.lat, lng: location.lng };
         
+        // Create marker
+        const marker = new google.maps.Marker({
+          position,
+          map: mapRef.current,
+          title: profile.name,
+          animation: google.maps.Animation.DROP,
+          icon: {
+            path: google.maps.SymbolPath.CIRCLE,
+            scale: selectedProfile?.id === profile.id ? 10 : 8,
+            fillColor: selectedProfile?.id === profile.id ? '#7c3aed' : '#4f46e5',
+            fillOpacity: 0.9,
+            strokeWeight: 2,
+            strokeColor: '#ffffff',
+          }
+        });
+        
+        // Create info window
+        const contentString = `
+          <div style="max-width: 250px; padding: 10px;">
+            <div style="display: flex; align-items: center; gap: 10px; margin-bottom: 10px;">
+              <img src="${profile.avatar}" alt="${profile.name}" style="width: 40px; height: 40px; border-radius: 50%; object-fit: cover;" />
+              <div>
+                <h3 style="margin: 0; font-weight: 600;">${profile.name}</h3>
+                <p style="margin: 0; font-size: 12px; color: #666;">${profile.address.city}, ${profile.address.state}</p>
+              </div>
+            </div>
+            <p style="margin: 5px 0; font-size: 14px;">${profile.description.substring(0, 100)}${profile.description.length > 100 ? '...' : ''}</p>
+          </div>
+        `;
+        
+        const infoWindow = new google.maps.InfoWindow({
+          content: contentString,
+          maxWidth: 300
+        });
+        
+        // Add click event to marker
+        marker.addListener('click', () => {
+          // Close all info windows
+          Object.values(infoWindowsRef.current).forEach(window => {
+            window.close();
+          });
+          
+          // Open this info window
+          infoWindow.open(mapRef.current, marker);
+          
+          // Call profile select handler if provided
+          if (onProfileSelect) {
+            onProfileSelect(profile.id);
+          }
+        });
+        
+        // Store marker and info window references
         markersRef.current[profile.id] = marker;
+        infoWindowsRef.current[profile.id] = infoWindow;
+        
+        // Extend bounds to include this marker
+        bounds.extend(position);
       });
       
-      // If there are multiple profiles, fit the map to show all markers
+      // Fit map to bounds if multiple profiles and no selected profile
       if (profiles.length > 1 && !selectedProfile) {
-        const bounds = new mapboxgl.LngLatBounds();
-        profiles.forEach(profile => {
-          bounds.extend([
-            profile.address.location.lng,
-            profile.address.location.lat
-          ]);
+        mapRef.current.fitBounds(bounds);
+        
+        // Add some padding
+        const listener = google.maps.event.addListenerOnce(mapRef.current, 'bounds_changed', () => {
+          mapRef.current?.setZoom(Math.min(mapRef.current.getZoom() || 15, 15));
         });
-        map.current.fitBounds(bounds, { padding: 50 });
       }
     }
     
-    // If we have a single selected profile
+    // Handle selected profile
     if (selectedProfile) {
       const { location } = selectedProfile.address;
       
-      // Fly to the selected profile location
-      map.current.flyTo({
-        center: [location.lng, location.lat],
-        zoom: 14,
-        essential: true,
-        duration: 1000
-      });
+      // Center map on selected profile
+      mapRef.current.panTo({ lat: location.lat, lng: location.lng });
+      mapRef.current.setZoom(14);
       
-      // If we don't have multiple profiles being shown, create a marker just for this selected profile
-      if (!profiles) {
-        const markerEl = document.createElement('div');
-        markerEl.className = 'rounded-full bg-accent w-8 h-8 border-2 border-white shadow-md flex items-center justify-center text-white text-xs font-bold';
-        markerEl.innerHTML = selectedProfile.name.charAt(0);
+      // If we have a marker for the selected profile, show its info window
+      if (markersRef.current[selectedProfile.id]) {
+        const marker = markersRef.current[selectedProfile.id];
+        const infoWindow = infoWindowsRef.current[selectedProfile.id];
         
-        const marker = new mapboxgl.Marker(markerEl)
-          .setLngLat([location.lng, location.lat])
-          .addTo(map.current);
+        if (infoWindow) {
+          // Close all other info windows
+          Object.values(infoWindowsRef.current).forEach(window => {
+            window.close();
+          });
+          
+          // Open this info window
+          infoWindow.open(mapRef.current, marker);
+        }
+      }
+      // If we don't have profiles list but have a selected profile, create a marker for it
+      else if (!profiles) {
+        const position = { lat: location.lat, lng: location.lng };
         
-        const popup = new mapboxgl.Popup({ offset: 25 })
-          .setHTML(`
-            <div class="flex items-center gap-3">
-              <img src="${selectedProfile.avatar}" alt="${selectedProfile.name}" class="w-10 h-10 rounded-full object-cover" />
+        const marker = new google.maps.Marker({
+          position,
+          map: mapRef.current,
+          title: selectedProfile.name,
+          animation: google.maps.Animation.DROP,
+          icon: {
+            path: google.maps.SymbolPath.CIRCLE,
+            scale: 10,
+            fillColor: '#7c3aed',
+            fillOpacity: 0.9,
+            strokeWeight: 2,
+            strokeColor: '#ffffff',
+          }
+        });
+        
+        const contentString = `
+          <div style="max-width: 250px; padding: 10px;">
+            <div style="display: flex; align-items: center; gap: 10px; margin-bottom: 10px;">
+              <img src="${selectedProfile.avatar}" alt="${selectedProfile.name}" style="width: 40px; height: 40px; border-radius: 50%; object-fit: cover;" />
               <div>
-                <h3 class="font-semibold">${selectedProfile.name}</h3>
-                <p class="text-xs text-muted-foreground">${selectedProfile.address.city}, ${selectedProfile.address.state}</p>
+                <h3 style="margin: 0; font-weight: 600;">${selectedProfile.name}</h3>
+                <p style="margin: 0; font-size: 12px; color: #666;">${selectedProfile.address.city}, ${selectedProfile.address.state}</p>
               </div>
             </div>
-            <p class="mt-2 text-sm">${selectedProfile.description}</p>
-            <p class="mt-2 text-xs font-semibold">${selectedProfile.address.street}, ${selectedProfile.address.city}, ${selectedProfile.address.state} ${selectedProfile.address.zipCode}</p>
-          `);
+            <p style="margin: 5px 0; font-size: 14px;">${selectedProfile.description}</p>
+            <p style="margin: 5px 0; font-size: 12px; font-weight: 600;">${selectedProfile.address.street}, ${selectedProfile.address.city}, ${selectedProfile.address.state} ${selectedProfile.address.zipCode}</p>
+          </div>
+        `;
         
-        marker.setPopup(popup).togglePopup();
+        const infoWindow = new google.maps.InfoWindow({
+          content: contentString,
+          maxWidth: 300
+        });
+        
+        // Store references
         markersRef.current[selectedProfile.id] = marker;
-      } else if (markersRef.current[selectedProfile.id]) {
-        // If the marker already exists, open its popup
-        markersRef.current[selectedProfile.id].togglePopup();
+        infoWindowsRef.current[selectedProfile.id] = infoWindow;
+        
+        // Open info window
+        infoWindow.open(mapRef.current, marker);
       }
     }
   }, [isMapReady, selectedProfile, profiles, onProfileSelect]);
 
-  if (showTokenInput) {
+  // Add window resize handler
+  useEffect(() => {
+    const handleResize = () => {
+      if (mapRef.current) {
+        google.maps.event.trigger(mapRef.current, 'resize');
+      }
+    };
+    
+    window.addEventListener('resize', handleResize);
+    return () => {
+      window.removeEventListener('resize', handleResize);
+    };
+  }, []);
+
+  if (showKeyInput) {
     return (
-      <div className={`border rounded-md p-6 ${className}`}>
-        <h3 className="text-lg font-semibold mb-4">Mapbox API Token Required</h3>
-        <p className="mb-4 text-muted-foreground">
-          Please enter a valid Mapbox access token to enable the map functionality. 
-          You can get one from <a href="https://account.mapbox.com/access-tokens/" 
-          target="_blank" rel="noopener noreferrer" 
-          className="text-blue-500 hover:underline">Mapbox</a>.
-        </p>
-        <form onSubmit={handleTokenSubmit} className="space-y-4">
-          <input 
-            type="text" 
-            className="w-full p-2 border rounded-md"
-            placeholder="pk.eyJ1IjoieW91..." 
-            required
-          />
-          <button 
-            type="submit" 
-            className="px-4 py-2 bg-primary text-white rounded-md hover:bg-primary/90"
-          >
-            Set Token
-          </button>
-        </form>
-      </div>
+      <GoogleMapsApiKeyInput 
+        onApiKeySet={handleApiKeySet} 
+        className={className}
+      />
     );
   }
 
