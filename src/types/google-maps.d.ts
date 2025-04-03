@@ -55,7 +55,8 @@ declare namespace google.maps {
     top: number;
   }
   
-  class Marker {
+  // Make Marker extend MVCObject
+  class Marker extends MVCObject {
     constructor(opts?: MarkerOptions);
     setMap(map: Map | null): void;
     getMap(): Map;
@@ -129,7 +130,7 @@ declare namespace google.maps {
     close(): void;
     getContent(): string | Element;
     getPosition(): LatLng;
-    open(map?: Map, anchor?: MVCObject): void;
+    open(map?: Map, anchor?: MVCObject | Marker): void; // Updated to accept Marker explicitly
     setContent(content: string | Element): void;
     setPosition(position: LatLng | LatLngLiteral): void;
     setZIndex(zIndex: number): void;
